@@ -26,13 +26,19 @@ void SieveOfEratosthenes(int n)
         }
     }
 
-    // Print all prime numbers up to n
-    printf("Prime numbers up to %d:\n", n);
-    for (int p = 2; p <= n; p++) {
-        if (prime[p])
+    if (n <= 100) {
+        // Print all prime numbers up to n
+        printf("Prime numbers up to %d:\n", n);
+        for (int p = 2; p <= n; p++) {
+            if (prime[p])
             printf("%d ", p);
+        }
+        printf("\n");
     }
-    printf("\n");
+    else {
+        WriteToFile("prime.txt", prime, n);
+
+    }
 
     // Free allocated memory
     free(prime);
@@ -60,4 +66,16 @@ int main()
 
     printf("Time taken: %lf seconds\n", time_taken);
     return 0;
+}
+
+void WriteToFile(char *filename, bool *prime, int n) {
+    FILE* file = fopen(filename, "w");
+    
+    for (int p = 2; p <= n; p++) {
+        if (prime[p]) {
+            fprintf(file, "%d\n", p);
+        }
+    }
+    fclose(file);
+
 }
