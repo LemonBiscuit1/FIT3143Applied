@@ -17,7 +17,7 @@ void SieveOfEratosthenes(int n)
     prime[0] = prime[1] = false;
 
     // For each number from 2 to sqrt(n)
-    for (int p = 2; p <= sqrt(n); p++) {
+    for (int p = 3; p <= sqrt(n); p++) {
         // If p is prime
         if (prime[p]) {
             // Mark all multiples of p as non-prime
@@ -29,7 +29,8 @@ void SieveOfEratosthenes(int n)
     if (n <= 100) {
         // Print all prime numbers up to n
         printf("Prime numbers up to %d:\n", n);
-        for (int p = 2; p <= n; p++) {
+        if (n >= 2) printf("2 ");
+        for (int p = 3; p <= n; p += 2) {
             if (prime[p])
             printf("%d ", p);
         }
@@ -71,7 +72,8 @@ int main()
 void WriteToFile(char *filename, bool *prime, int n) {
     FILE* file = fopen(filename, "w");
     
-    for (int p = 2; p <= n; p++) {
+    fprintf(file, "2\n");
+    for (int p = 3; p <= n; p += 2) {
         if (prime[p]) {
             fprintf(file, "%d\n", p);
         }
