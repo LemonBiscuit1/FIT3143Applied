@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 // Define SieveOfEratosthenes function
 void SieveOfEratosthenes(int n)
@@ -47,6 +48,16 @@ int main()
     // Read user input
     scanf("%d", &n);
     // Call SieveOfEratosthenes function with user input
+
+    struct timespec start, end; 
+    clock_gettime(CLOCK_MONOTONIC, &start); 
     SieveOfEratosthenes(n);
+    clock_gettime(CLOCK_MONOTONIC, &end); 
+
+    double time_taken;
+    time_taken = (end.tv_sec - start.tv_sec) * 1e9; 
+    time_taken = (time_taken + (end.tv_nsec - start.tv_nsec)) * 1e-9; 
+
+    printf("Time taken: %lf seconds\n", time_taken);
     return 0;
 }
