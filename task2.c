@@ -6,34 +6,42 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
-#include <semaphore.h>
 
-sem_t semaphore;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 bool* primes;
 int* g_small_primes;
 int g_small_primes_count;
-int WINDOW_SIZE;
+int WINDOW_SIZE = 65536;
+int bound;
+int n;
 
-typedef struct s_t_arg {
+void* thread() {
     int lbound;
     int ubound;
-} t_arg;
 
-void* thread(void* args) {
-    t_arg data = *(t_arg*) args;
+    // Screen for primes using windows, checking a small region of every prime.
+    // Claim a screen of width WINDOW_SIZE, and increment it to let a next thread do the work
+    while (bound < n) {
+        pthread_mutex_lock(&mutex);
+        lbound = bound;
+        ubound = n < bound + WINDOW_SIZE - 1 ? n : bound + WINDOW_SIZE - 1; // Cap bound at n
 
-    for (int k = 0; k < g_small_primes_count; k++) {
-        int p = g_small_primes[k];
-        int add = p * 2;
-        int start = data.lbound - (data.lbound % add) + p;
-        if (start < data.lbound) start += add;
+        bound += WINDOW_SIZE;
+        pthread_mutex_unlock(&mutex);
+        
+        for (int k = 0; k < g_small_primes_count; k++) {
+            int p = g_small_primes[k];
+            int add = p * 2;
+            int start = lbound - (lbound % add) + p;
 
-        for (int i = start; i <= data.ubound; i += add) {
-            primes[i] = false;
+            if (start < lbound) start += add;
+            if (start < p * p) start = p * p;
+
+            for (int i = start; i <= ubound; i += add) {
+                primes[i] = false;
+            }
         }
     }
-
-    sem_post(&semaphore);
     return NULL;
 }
 
@@ -41,7 +49,7 @@ void sieve(bool* b, int n) {
     for (int p = 3; p <= n; p += 2) {
         if (b[p]) {
             int add = p * 2;
-            for (int i = p + add; i <= n; i += add)
+            for (int i = p * p; i <= n; i += add)
                 b[i] = false;
         }
     }
@@ -65,19 +73,16 @@ void WriteToFile(char *filename, bool *prime, int n) {
 int main()
 {
     // Get prime bound
-    int n;
     printf("Enter the maximum number to find primes: ");
     scanf("%d", &n);
-    
-    WINDOW_SIZE = (int) floor(2 * n / sqrt(n)); // Approximate average size of n / [any prime] to get even distributions of operations
 
-    // Thread count
+    // // Thread count
     int t;
     printf("Enter the maximum number of threads: ");
     scanf("%d", &t);
-    sem_init(&semaphore, 0, t);
 
     if (n < 2) return 0;
+    if (t < 1) return 0;
 
     int sqrt_n = (int) sqrt(n);
 
@@ -100,44 +105,18 @@ int main()
             g_small_primes[g_small_primes_count++] = i;
 
     pthread_t* threads = malloc(t * sizeof(pthread_t));
-    t_arg* args = malloc(t * sizeof(t_arg));
 
-    int counter = 0;
-    int bound = sqrt_n + 1;
-
-    // Screen for primes usins windows, checking a small region of every prime.
-    // Parallel screening done in t number of screens using threads with bounds [lbound, ubound].
-    while (bound < n) {
-        sem_wait(&semaphore);
-        args[counter % t].lbound = bound;
-        args[counter % t].ubound = n < bound + WINDOW_SIZE - 1 ? n : bound + WINDOW_SIZE - 1; // Cap bound at n
-
-        pthread_create(&threads[counter % t], NULL, thread, &args[counter % t]);
-        counter++;
-
-        // Free up next thread
-        if ((counter + 1) >= t) {
-            pthread_join(threads[(counter + 1) % t], NULL);
-        }
-
-        bound += WINDOW_SIZE;
-    }
-
-    // Make sure all threads are done
-    for (int i = 0; i < t; i++) sem_wait(&semaphore);
+    bound = sqrt_n + 1;
+    for (int i = 0; i < t; i++) pthread_create(&threads[i], NULL, thread, NULL);
     
-    // Join all leftover threads
-    counter %= t;
-    for (int i = 0; i < counter; i++) pthread_join(threads[i], NULL);
+    // Join all threads
+    for (int i = 0; i < t; i++) pthread_join(threads[i], NULL);
 
     WriteToFile("prime3.txt", primes, n);
 
     // Cleanup
     free(primes);
     free(g_small_primes);
-    free(threads);
-    free(args);
-    sem_destroy(&semaphore);
 
     clock_gettime(CLOCK_MONOTONIC, &end);
 
@@ -145,5 +124,6 @@ int main()
     time_taken = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) * 1e-9;
 
     printf("Time taken: %lf seconds\n", time_taken);
+
     return 0;
 }
