@@ -2,106 +2,168 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
+#include <string.h>
 #include <omp.h>
 
-// Forward declaration (missing in the original file, which caused an
-// implicit-declaration warning / undefined behaviour on some compilers)
-void WriteToFile(char *filename, bool *prime, int n);
+// Forward declarations
+void SegmentedSieve(long n);
+void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegments);
 
-// Define SieveOfEratosthenes function (OpenMP-parallel version)
-void SieveOfEratosthenes(int n)
+// Size (in numbers covered) of each segment. Chosen to comfortably fit
+// in L1/L2 cache so each segment's marking loop is cache-friendly.
+// This is the key idea of the segmented sieve: instead of one huge
+// array of size n, we only ever need `limit` (for the base primes) and
+// one segment-sized buffer at a time - and since segments are
+// independent, they can be processed on different threads too.
+#define SEGMENT_SIZE 131072L // 2^17
+
+// Simple (non-segmented) sieve, used once to find all base primes up
+// to sqrt(n). This part is small and stays serial.
+static long* SimpleSieve(long limit, int* outCount)
 {
-    // Allocate memory for prime array and initialize all
-    // elements as true
-    bool* prime = malloc((n + 1) * sizeof(bool));
+    bool* isComposite = calloc(limit + 1, sizeof(bool));
+    long count = 0;
 
-    // Parallel initialisation - independent, so trivially parallel
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i <= n; i++)
-        prime[i] = true;
-
-    // 0 and 1 are not prime numbers
-    prime[0] = prime[1] = false;
-
-    // The OUTER loop (choosing which p to sieve with) must stay serial:
-    // whether p is prime depends on all the marking done by smaller
-    // primes, so iterations of this loop are not independent.
-    int limit = (int)sqrt((double)n);
-    for (int p = 3; p <= limit; p++) {
-        // If p is prime
-        if (prime[p]) {
-            // Mark all multiples of p as non-prime.
-            // This INNER loop is where almost all the work is, and each
-            // iteration writes to a different index of `prime`, so it is
-            // safe (and effective) to parallelize.
-            #pragma omp parallel for schedule(dynamic, 1024)
-            for (int i = p * p; i <= n; i += p)
-                prime[i] = false;
+    for (long p = 2; p * p <= limit; p++) {
+        if (!isComposite[p]) {
+            for (long i = p * p; i <= limit; i += p)
+                isComposite[i] = true;
         }
     }
 
-    if (n <= 100) {
-        // Print all prime numbers up to n (kept serial - tiny amount of
-        // work and I/O ordering matters for the printed output)
-        printf("Prime numbers up to %d:\n", n);
-        if (n >= 2) printf("2 ");
-        for (int p = 3; p <= n; p += 2) {
-            if (prime[p])
-                printf("%d ", p);
-        }
-        printf("\n");
-    }
-    else {
-        WriteToFile("prime.txt", prime, n);
-    }
+    for (long p = 2; p <= limit; p++)
+        if (!isComposite[p]) count++;
 
-    // Free allocated memory
-    free(prime);
+    long* basePrimes = malloc(count * sizeof(long));
+    long idx = 0;
+    for (long p = 2; p <= limit; p++)
+        if (!isComposite[p]) basePrimes[idx++] = p;
+
+    free(isComposite);
+    *outCount = (int)count;
+    return basePrimes;
 }
 
-// Define main function
+void SegmentedSieve(long n)
+{
+    if (n < 2) {
+        printf("No primes <= %ld\n", n);
+        return;
+    }
+
+    long limit = (long)sqrt((double)n) + 1;
+
+    // Step 1: base primes up to sqrt(n), computed once, serially.
+    int baseCount;
+    long* basePrimes = SimpleSieve(limit, &baseCount);
+
+    // Step 2: split [2, n] into segments and sieve each one
+    // independently. Segments do not share any state, so this loop is
+    // embarrassingly parallel.
+    int numSegments = (int)((n - 2) / SEGMENT_SIZE) + 1;
+
+    // Each segment gets its own output buffer (list of primes found in
+    // that segment) and count, filled independently by whichever
+    // thread processes it, then written out in order afterwards so the
+    // final output/file is still sorted ascending.
+    long** segPrimes = malloc(numSegments * sizeof(long*));
+    int* segCount = malloc(numSegments * sizeof(int));
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int seg = 0; seg < numSegments; seg++) {
+        long low = 2 + (long)seg * SEGMENT_SIZE;
+        long high = low + SEGMENT_SIZE - 1;
+        if (high > n) high = n;
+        long segLen = high - low + 1;
+
+        // false = "prime" (not yet marked composite), local to this thread
+        bool* isComposite = calloc(segLen, sizeof(bool));
+
+        for (int bi = 0; bi < baseCount; bi++) {
+            long p = basePrimes[bi];
+            if (p * p > high) break; // no multiple of p can start in-range beyond this
+
+            // First multiple of p that is >= low and >= p*p
+            long start = (low / p) * p;
+            if (start < low) start += p;
+            if (start < p * p) start = p * p;
+
+            for (long i = start; i <= high; i += p)
+                isComposite[i - low] = true;
+        }
+
+        // Collect primes found in this segment into its own buffer
+        long* localPrimes = malloc(segLen * sizeof(long));
+        int localCount = 0;
+        for (long i = 0; i < segLen; i++) {
+            long value = low + i;
+            if (value >= 2 && !isComposite[i])
+                localPrimes[localCount++] = value;
+        }
+
+        segPrimes[seg] = localPrimes;
+        segCount[seg] = localCount;
+
+        free(isComposite);
+    }
+
+    free(basePrimes);
+
+    // Step 3: emit results in segment order (serial - I/O should not
+    // be parallelized, and segments are already in ascending order).
+    if (n <= 100) {
+        printf("Prime numbers up to %ld:\n", n);
+        for (int seg = 0; seg < numSegments; seg++) {
+            for (int i = 0; i < segCount[seg]; i++)
+                printf("%ld ", segPrimes[seg][i]);
+        }
+        printf("\n");
+        for (int seg = 0; seg < numSegments; seg++)
+            free(segPrimes[seg]);
+    }
+    else {
+        WriteToFile("prime.txt", segPrimes, segCount, numSegments);
+        for (int seg = 0; seg < numSegments; seg++)
+            free(segPrimes[seg]);
+    }
+
+    free(segPrimes);
+    free(segCount);
+}
+
+void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegments)
+{
+    FILE* file = fopen(filename, "w");
+    if (!file) {
+        perror("fopen");
+        return;
+    }
+    for (int seg = 0; seg < numSegments; seg++) {
+        for (int i = 0; i < segCount[seg]; i++)
+            fprintf(file, "%ld\n", segPrimes[seg][i]);
+    }
+    fclose(file);
+}
+
 int main()
 {
-    // Declare variable to hold maximum number
-    int n;
-    // Prompt user to enter the maximum number
+    long n;
     printf("Enter the maximum number to find primes: ");
-    // Read user input
-    scanf("%d", &n);
+    if (scanf("%ld", &n) != 1) {
+        fprintf(stderr, "Invalid input\n");
+        return 1;
+    }
 
-    // Report how many threads OpenMP will use, for reference
     #pragma omp parallel
     {
         #pragma omp single
         printf("Running with %d OpenMP thread(s)\n", omp_get_num_threads());
     }
 
-    // Use omp_get_wtime for a wall-clock timer that works correctly
-    // across the parallel regions above
     double start = omp_get_wtime();
-    SieveOfEratosthenes(n);
+    SegmentedSieve(n);
     double end = omp_get_wtime();
 
     printf("Time taken: %lf seconds\n", end - start);
     return 0;
-}
-
-void WriteToFile(char *filename, bool *prime, int n) {
-    FILE* file = fopen(filename, "w");
-    if (!file) {
-        perror("fopen");
-        return;
-    }
-
-    fprintf(file, "2\n");
-    // Kept serial: writing to a single FILE* from multiple threads would
-    // need synchronization that would likely erase any speed benefit,
-    // and I/O is not the bottleneck compared to the sieve itself.
-    for (int p = 3; p <= n; p += 2) {
-        if (prime[p]) {
-            fprintf(file, "%d\n", p);
-        }
-    }
-    fclose(file);
 }
