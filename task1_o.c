@@ -30,7 +30,7 @@ void SieveOfEratosthenes(int n)
     for (int p = 3; p <= sqrt(n); p += 2) {
         if (prime[p]) {
             add = p * 2;
-            for (int i = p + add; i <= n; i += add)
+            for (int i = p * p; i <= n; i += add)
                 prime[i] = false;
         }
     }
