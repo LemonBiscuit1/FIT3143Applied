@@ -9,12 +9,6 @@
 void SegmentedSieve(long n);
 void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegments);
 
-// Size (in numbers covered) of each segment. Chosen to comfortably fit
-// in L1/L2 cache so each segment's marking loop is cache-friendly.
-// This is the key idea of the segmented sieve: instead of one huge
-// array of size n, we only ever need `limit` (for the base primes) and
-// one segment-sized buffer at a time - and since segments are
-// independent, they can be processed on different threads too.
 #define SEGMENT_SIZE 131072L // 2^17
 
 // Simple (non-segmented) sieve, used once to find all base primes up
@@ -57,15 +51,8 @@ void SegmentedSieve(long n)
     int baseCount;
     long* basePrimes = SimpleSieve(limit, &baseCount);
 
-    // Step 2: split [2, n] into segments and sieve each one
-    // independently. Segments do not share any state, so this loop is
-    // embarrassingly parallel.
     int numSegments = (int)((n - 2) / SEGMENT_SIZE) + 1;
 
-    // Each segment gets its own output buffer (list of primes found in
-    // that segment) and count, filled independently by whichever
-    // thread processes it, then written out in order afterwards so the
-    // final output/file is still sorted ascending.
     long** segPrimes = malloc(numSegments * sizeof(long*));
     int* segCount = malloc(numSegments * sizeof(int));
 
@@ -109,8 +96,7 @@ void SegmentedSieve(long n)
 
     free(basePrimes);
 
-    // Step 3: emit results in segment order (serial - I/O should not
-    // be parallelized, and segments are already in ascending order).
+
     if (n <= 100) {
         printf("Prime numbers up to %ld:\n", n);
         for (int seg = 0; seg < numSegments; seg++) {
@@ -149,7 +135,7 @@ int main()
 {
     
     long n;
-    //printf("Enter the maximum number to find primes: ");
+    printf("Enter the maximum number to find primes: ");
     if (scanf("%ld", &n) != 1) {
         fprintf(stderr, "Invalid input\n");
         return 1;
@@ -163,7 +149,7 @@ int main()
     }
 
     double start = omp_get_wtime();
-    SegmentedSieve(10000000);
+    SegmentedSieve(n);
     double end = omp_get_wtime();
 
     printf("Time taken: %lf seconds\n", end - start);
