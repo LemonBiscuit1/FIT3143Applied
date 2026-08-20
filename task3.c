@@ -147,12 +147,14 @@ void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegment
 
 int main()
 {
+    
     long n;
-    printf("Enter the maximum number to find primes: ");
+    //printf("Enter the maximum number to find primes: ");
     if (scanf("%ld", &n) != 1) {
         fprintf(stderr, "Invalid input\n");
         return 1;
     }
+    
 
     #pragma omp parallel
     {
@@ -161,7 +163,7 @@ int main()
     }
 
     double start = omp_get_wtime();
-    SegmentedSieve(n);
+    SegmentedSieve(10000000);
     double end = omp_get_wtime();
 
     printf("Time taken: %lf seconds\n", end - start);
