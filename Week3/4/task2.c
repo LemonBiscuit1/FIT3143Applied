@@ -80,7 +80,7 @@ int main()
     int t;
     printf("Enter the maximum number of threads: ");
     scanf("%d", &t);
-
+    
     if (n < 2) return 0;
     if (t < 1) return 0;
 

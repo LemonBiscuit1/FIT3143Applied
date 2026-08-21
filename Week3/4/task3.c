@@ -152,24 +152,9 @@ void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegment
     fclose(file);
 }
 
-int main()
+int main(int argc, char *argv[])
 {
-    long m;
-    printf("Enter the number of threads you want to use: ");
-    if (scanf("%ld", &m) != 1 || m < 1) {
-        fprintf(stderr, "Invalid input\n");
-        return 1;
-    }
-
-    omp_set_num_threads(m);
-
-    long n;
-    printf("Enter the maximum number to find primes: ");
-    if (scanf("%ld", &n) != 1) {
-        fprintf(stderr, "Invalid input\n");
-        return 1;
-    }
-    
+    omp_set_num_threads(atoi(argv[2])); // Set number of threads from command line argument
 
     #pragma omp parallel
     {
@@ -178,7 +163,7 @@ int main()
     }
 
     double start = omp_get_wtime();
-    SegmentedSieve(n);
+    SegmentedSieve(argv[1]);
     double end = omp_get_wtime();
 
     printf("Time taken: %lf seconds\n", end - start);
