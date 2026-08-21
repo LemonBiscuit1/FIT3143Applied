@@ -15,23 +15,34 @@ void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegment
 // to sqrt(n). This part is small and stays serial.
 static long* SimpleSieve(long limit, int* outCount)
 {
-    bool* isComposite = calloc(limit + 1, sizeof(bool));
-    long count = 0;
+    if (limit < 2) {
+        *outCount = 0;
+        return malloc(0);
+    }
 
-    for (long p = 2; p * p <= limit; p++) {
-        if (!isComposite[p]) {
-            for (long i = p * p; i <= limit; i += p)
-                isComposite[i] = true;
+    long numOdds = (limit - 3) / 2 + 1;
+    if (numOdds < 0) numOdds = 0;
+    bool* isComposite = (numOdds > 0) ? calloc(numOdds, sizeof(bool)) : NULL;
+
+    for (long i = 0; i < numOdds; i++) {
+        long p = 2 * i + 3;
+        if (p * p > limit) break;
+        if (!isComposite[i]) {
+            // Only mark odd multiples of p; stepping by 2*p keeps them odd.
+            for (long val = p * p; val <= limit; val += 2 * p)
+                isComposite[(val - 3) / 2] = true;
         }
     }
 
-    for (long p = 2; p <= limit; p++)
-        if (!isComposite[p]) count++;
+    long count = 1; // account for prime 2
+    for (long i = 0; i < numOdds; i++)
+        if (!isComposite[i]) count++;
 
     long* basePrimes = malloc(count * sizeof(long));
     long idx = 0;
-    for (long p = 2; p <= limit; p++)
-        if (!isComposite[p]) basePrimes[idx++] = p;
+    basePrimes[idx++] = 2;
+    for (long i = 0; i < numOdds; i++)
+        if (!isComposite[i]) basePrimes[idx++] = 2 * i + 3;
 
     free(isComposite);
     *outCount = (int)count;
@@ -56,36 +67,46 @@ void SegmentedSieve(long n)
     long** segPrimes = malloc(numSegments * sizeof(long*));
     int* segCount = malloc(numSegments * sizeof(int));
 
-    #pragma omp parallel for schedule(dynamic)
+    #pragma omp parallel for schedule(static)
     for (int seg = 0; seg < numSegments; seg++) {
         long low = 2 + (long)seg * SEGMENT_SIZE;
         long high = low + SEGMENT_SIZE - 1;
         if (high > n) high = n;
-        long segLen = high - low + 1;
+
+        // Only odd numbers in [low, high] are tracked; the even number 2
+        // (which only ever appears in the very first segment) is added
+        // separately below. index i <-> value (firstOdd + 2*i).
+        long firstOdd = (low % 2 == 0) ? low + 1 : low;
+        long numOdds = (firstOdd <= high) ? (high - firstOdd) / 2 + 1 : 0;
 
         // false = "prime" (not yet marked composite), local to this thread
-        bool* isComposite = calloc(segLen, sizeof(bool));
+        bool* isComposite = (numOdds > 0) ? calloc(numOdds, sizeof(bool)) : NULL;
 
         for (int bi = 0; bi < baseCount; bi++) {
             long p = basePrimes[bi];
+            if (p == 2) continue; // no even numbers are tracked, so skip
             if (p * p > high) break; // no multiple of p can start in-range beyond this
 
             // First multiple of p that is >= low and >= p*p
             long start = (low / p) * p;
             if (start < low) start += p;
             if (start < p * p) start = p * p;
+            if (start % 2 == 0) start += p; // p is odd, so this keeps start odd
 
-            for (long i = start; i <= high; i += p)
-                isComposite[i - low] = true;
+            for (long i = start; i <= high; i += 2 * p)
+                isComposite[(i - firstOdd) / 2] = true;
         }
 
         // Collect primes found in this segment into its own buffer
-        long* localPrimes = malloc(segLen * sizeof(long));
+        long* localPrimes = malloc((high - low + 2) * sizeof(long));
         int localCount = 0;
-        for (long i = 0; i < segLen; i++) {
-            long value = low + i;
-            if (value >= 2 && !isComposite[i])
-                localPrimes[localCount++] = value;
+
+        if (low <= 2 && high >= 2)
+            localPrimes[localCount++] = 2;
+
+        for (long i = 0; i < numOdds; i++) {
+            if (!isComposite[i])
+                localPrimes[localCount++] = firstOdd + 2 * i;
         }
 
         segPrimes[seg] = localPrimes;
@@ -133,7 +154,15 @@ void WriteToFile(char *filename, long **segPrimes, int *segCount, int numSegment
 
 int main()
 {
-    
+    long m;
+    printf("Enter the number of threads you want to use: ");
+    if (scanf("%ld", &m) != 1 || m < 1) {
+        fprintf(stderr, "Invalid input\n");
+        return 1;
+    }
+
+    omp_set_num_threads(m);
+
     long n;
     printf("Enter the maximum number to find primes: ");
     if (scanf("%ld", &n) != 1) {
